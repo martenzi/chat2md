@@ -1,5 +1,63 @@
 # Changelog
 
+## [5.0.0] - 2026-09-10
+
+See `docs/SPEC_v5_shape_driven_extraction.md` and `docs/AUDIT_2026-09-10_coverage_and_fidelity.md`
+for the full writeup this release implements. Duplicate-and-fix of the v4.0 line,
+which it supersedes.
+
+### Fixed
+- **RAW mode is now actually raw (the audit's highest-severity finding).** v4.0's
+  `extract_content()` unconditionally dropped every `tool_use`/`tool_result`/`image`/...
+  content item in *all three* modes, including RAW, despite the README promising RAW
+  keeps everything — a content-item-nested tool call (Anthropic/Claude Code/Devin ACP
+  shape) had no tier that showed it at all, and the message vanished entirely if that
+  was its only content. `Config.keep_item_types` now says which mapped block types
+  each mode keeps; kept items render as their own block (`Message.blocks`) in source
+  order instead of being silently discarded.
+- **TOOLS mode no longer drops tool records.** `skip_roles` stopped excluding
+  `tool`/`function`/`tool_result`/`function_result` — a tier named "Tools" that
+  dropped tool content was the same defect at the record level.
+
+### Added
+- **Three data tables replace four hardcoded per-provider functions.**
+  `WRAPPER_KEYS`/`CONTAINER_KEYS`/`ROLE_KEYS` (plus `CONTENT_KEYS`/`TIMESTAMP_KEYS`)
+  and one shape resolver (`resolve_record()`) recognize a format by how it nests, not
+  by a provider name check. Verified working, with real (redacted) fixtures, on six
+  formats that previously produced `SKIP`: ChatGPT's official `mapping` export,
+  Claude Desktop, Devin CLI, Devin Desktop (ACP), and Cursor all now convert at 100%
+  measured coverage in TOOLS/RAW mode. The sixth, Antigravity, is a **documented
+  limitation, not a fix** — its real export format turned out to be opaque Protocol
+  Buffers inside a SQLite `.db`, not JSON, discovered only once real fixture data was
+  inspected; see `MAINTAINING.md`.
+- **Coverage self-report.** Every conversion measures accountable source characters
+  vs. emitted characters and writes the ratio to `conversion_log.md`, naming the top
+  unaccounted key paths when it's low (`⚠` under 90%, `⚠⚠` and a non-zero exit code
+  under 50%, `--allow-low-coverage` to suppress). Turns "the tool doesn't understand
+  this shape" into a loud, specific report instead of a suspiciously short file.
+- **`--diagnose`** — full key-path enumeration, role/wrapper/container table-match
+  report, and shape signatures for an unfamiliar file or folder, with no conversion
+  and no Markdown output.
+- `tests/fixtures/<provider>/` (one real redacted fixture per new provider) and
+  `tests/run_tests.py`, a stdlib-`unittest` regression + acceptance suite: proves
+  v5.0's CHAT output is byte-identical to the frozen v4.0 output
+  (`tests/expected/chat/`) for every previously-working format,
+  and checks the new providers clear the coverage bar.
+
+### Explicitly not changed
+- No ChatVault adapters were ported in, and no dependency on ChatVault was added —
+  provider knowledge was copied as data (see `MAINTAINING.md`), not code. Still
+  stdlib-only, still zero third-party imports (swept by `tests/run_tests.py`).
+- `_ROLE_SYNONYMS` deliberately does **not** map `"model"` → `"assistant"`, despite
+  an earlier design draft suggesting it — `samples/sample_gemini.json`'s `"model"`
+  role is v4.0-unmapped, and the byte-identical regression requirement won out over
+  the illustrative example. See `MAINTAINING.md`.
+
+### Changed
+- Chat-mode skip list no longer matches private agent-name prefixes. Generic
+  workspace markers (`agents.md`, `soul.md`, `identity.md`, `memory.md`,
+  `<environment_context>`, Windsurf memory tags) stay.
+
 ## [4.0.0] - 2026-07-26 - Windsurf-Legacy Fix Edition
 
 ### Added
@@ -14,7 +72,7 @@
 - No broad "un-double-escape" or JSON-fragment-repair pass was added for a single leaked tool-call fragment found in one message out of 800 inspected. Such a heuristic would risk mangling legitimate escaped code/diff content in other formats.
 - The literal source text `"KRun..."` was not corrected; it is source content, not a rendering artifact.
 
-## [3.5.0] - 2026-04-01 - Miss Peacock Audit Edition
+## [3.5.0] - 2026-04-01 - Mode Prefix and Batch Fix
 
 ### Added
 - **Mode prefix on output filenames:** every `.md` file is prefixed with `[Chat]`, `[Tools]`, or `[Raw]` for instant identification in Finder.

@@ -1,26 +1,59 @@
-# AI Session Extractor
+# Chat2MD — AI Chat-to-Markdown Converter
 
-A small, dependency-free Python toolkit that converts JSON/JSONL AI conversation exports into clean, readable Markdown.
+![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue) ![No dependencies](https://img.shields.io/badge/dependencies-none-green) ![License MIT](https://img.shields.io/badge/license-MIT-green)
 
-It works across providers — **OpenAI/ChatGPT, Anthropic/Claude, Google Gemini CLI, OpenAI Codex rollout, Windsurf-legacy, and generic `role`/`content`/`text` formats** — from a single set of scripts. Built because no existing tool covered all of these cleanly.
+A small, dependency-free Python toolkit that converts AI chat JSON/JSONL exports into clean, readable Markdown.
+
+**v5.0** recognizes export formats by structure instead of hardcoding providers: three small
+lookup tables (not one function per provider) recognize a format by how it nests —
+a wrapper key here, a container key there — so a format the tool has never seen
+before often just works. It's been verified against **OpenAI/ChatGPT (both the
+simple export and the official `mapping` format), Anthropic/Claude, Claude Desktop,
+Google Gemini CLI, OpenAI Codex rollout, Devin CLI, Devin Desktop, Cursor,
+Windsurf-legacy, and generic `role`/`content`/`text` formats** — and reports its own
+confidence on anything else (see [Coverage self-report](#coverage-self-report) below)
+rather than silently guessing.
 
 ## Why
 
-Every AI provider exports conversations in a different JSON shape, and most converters handle only one. If you use more than one provider — or you audit agent behavior across tools — you end up with a folder of incompatible exports and nothing that reads them all.
+Every major AI provider lets you export your chat history locally, and most use JSON or JSONL as the format. The structure of the conversation — who said what, when, and what kind of block it is — is conceptually the same across all of them. What differs is the JSON schema: how each provider names its fields, nests its records, and defines the **block types** that make up the conversational body (dialogue, thinking, tool calls, tool results, system instructions, memory, etc.).
 
-AI Session Extractor normalizes all of them into one Markdown format with one command. No Node, no pip install, no API keys — just Python 3.9+ and the standard library.
+Few tools can read across those schemas. The result is a folder of exports from different providers that you can't search, share, or diff in one consistent format.
+
+AI Chat JSON to Markdown normalizes all of them into one Markdown format with one command. No Node, no pip install, no API keys — just Python 3.9+ and the standard library.
 
 ## What it does
 
 Drop one or more JSON/JSONL files (or folders) onto a script and get a timestamped output folder containing one `.md` file per conversation plus a `conversion_log.md` report.
 
-Three extraction modes let you choose how much detail you want:
+### Three detail levels
 
-| Mode | What it keeps | Best for |
-|------|---------------|----------|
-| **Chat** | Human/assistant dialogue + thinking blocks only | Reading, sharing, blogging |
-| **Tools** | Dialogue + system/developer instructions and memory files | Auditing agent behavior |
-| **Raw** | Everything — tool results, system messages, memory, full context | Forensics / diff baseline |
+AI chat exports are made up of different **block types** — not just dialogue, but also thinking, tool calls, system instructions, memory, and more. The three modes differ only in which block types they keep, so you get exactly the level of detail you need:
+
+| Block type | Chat | Tools | Raw |
+|------------|:----:|:-----:|:---:|
+| User dialogue | ✓ | ✓ | ✓ |
+| Assistant dialogue | ✓ | ✓ | ✓ |
+| Thinking / reasoning | ✓ | ✓ | ✓ |
+| System / developer messages | — | ✓ | ✓ |
+| Agent instructions (agents.md, environment, permissions) | — | ✓ | ✓ |
+| Memory files & memory-injection blocks | — | ✓ | ✓ |
+| Tool calls (function calls, with arguments) | — | ✓ | ✓ |
+| Tool results (function outputs) | — | ✓ | ✓ |
+| Images / audio | — | one-line stub | one-line stub |
+| Refusals | — | one-line label | one-line label |
+| Errors | — | — | one-line label |
+| Session metadata (model changes, turn context) | — | — | — |
+
+Session metadata is always dropped — it's structural noise, not conversational content.
+Verified against real output row by row — see `tests/run_tests.py::TestAuditThreeRecordCase`
+for the tool-call/result case specifically (v4.0's RAW mode silently dropped these; v5.0 fixes it).
+
+| Mode | Best for |
+|------|----------|
+| **Chat** | Reading, sharing, blogging — just the dialogue |
+| **Tools** | Auditing agent behavior — what instructions and memory it operated under |
+| **Raw** | Forensics / diff baseline — a complete record of everything that happened |
 
 Output is tagged by mode so you can tell files apart at a glance:
 
@@ -38,7 +71,38 @@ extracted_TOOLS_YYYYMMDD_HHMMSS/conversion_log.md
 extracted_RAW_YYYYMMDD_HHMMSS/conversion_log.md
 ```
 
-The log lists every source file, its output filename, and any warnings (for example, if invalid UTF-8 had to be replaced during decoding).
+The log lists every source file, its output filename, any warnings (for example, if
+invalid UTF-8 had to be replaced during decoding), and a **coverage** percentage —
+see below.
+
+## Coverage self-report
+
+Every conversion measures how much of the source file's accountable text (every
+string-valued leaf, minus structural noise like ids and timestamps) actually made it
+into the Markdown, and writes the ratio to `conversion_log.md`:
+
+```text
+- Coverage: 94% of accountable content emitted (RAW mode)
+```
+
+At **≥90%** it's silent. Between **50–89%** it adds a `⚠ Warning` with the top
+unaccounted key paths by volume. Below **50%** it adds a `⚠⚠ Likely unsupported
+shape` line and the run exits non-zero (pass `--allow-low-coverage` to suppress) —
+useful in a script, and the reason a `SKIP` here is a loud, specific failure instead
+of a suspiciously short output file. Most converters fail silently; this one reports
+its own confidence and names what it didn't understand.
+
+## `--diagnose` — investigate an unfamiliar format
+
+```bash
+python3 markdown_extraction_chat.py --diagnose path/to/file_or_folder/
+```
+
+No conversion, no Markdown output — just `diagnosis.md`: every key path in the file
+with occurrence counts and types, the top string-leaf paths by character volume,
+distinct record shapes, and which `WRAPPER_KEYS`/`CONTAINER_KEYS`/`ROLE_KEYS` table
+entries matched (and which didn't, as candidates to add). Full enumeration, never a
+sample.
 
 ## Quick start
 
@@ -46,7 +110,7 @@ Try it on the bundled synthetic samples (no real data included):
 
 ```bash
 # Chat mode across all three provider formats in one run
-python3 markdown_extraction_chat_v4.0.py samples/sample_chatgpt.jsonl samples/sample_gemini.json samples/sample_generic.jsonl
+python3 markdown_extraction_chat.py samples/sample_chatgpt.jsonl samples/sample_gemini.json samples/sample_generic.jsonl
 ```
 
 Output lands in a timestamped `extracted_CHAT_...` folder next to the first input. See [`samples/`](samples) for the input files and [`samples/output/`](samples/output) for what the Markdown looks like.
@@ -61,9 +125,10 @@ Output lands in a timestamped `extracted_CHAT_...` folder next to the first inpu
 ### Command line
 
 ```bash
-python3 markdown_extraction_chat_v4.0.py  chat.jsonl  folder_of_exports/
-python3 markdown_extraction_tools_v4.0.py session.json
-python3 markdown_extraction_raw_v4.0.py  some-folder/
+python3 markdown_extraction_chat.py  chat.jsonl  folder_of_exports/
+python3 markdown_extraction_tools.py session.json
+python3 markdown_extraction_raw.py  some-folder/
+python3 markdown_extraction_chat.py --diagnose some-folder/   # investigate, don't convert
 ```
 
 You can pass any number of files or folders; all outputs land in a single timestamped folder next to the first input.
@@ -73,7 +138,7 @@ You can pass any number of files or folders; all outputs land in a single timest
 The scripts work as the shell script step inside a macOS `.app`:
 
 ```bash
-/usr/bin/python3 /path/to/markdown_extraction_chat_v4.0.py "$@"
+/usr/bin/python3 /path/to/markdown_extraction_chat.py "$@"
 ```
 
 Set the Automator action to receive input as arguments, then drag JSON/JSONL files or folders onto the app icon.
@@ -81,22 +146,44 @@ Set the Automator action to receive input as arguments, then drag JSON/JSONL fil
 ## File layout
 
 ```text
-_session_extractor_core_v4.0.py      # Shared engine (do not run directly)
-markdown_extraction_chat_v4.0.py     # Chat-mode wrapper
-markdown_extraction_tools_v4.0.py    # Tools/Audit-mode wrapper
-markdown_extraction_raw_v4.0.py     # Raw/Forensic-mode wrapper
+_session_extractor_core.py      # Shared engine (do not run directly)
+markdown_extraction_chat.py     # Chat-mode wrapper
+markdown_extraction_tools.py    # Tools/Audit-mode wrapper
+markdown_extraction_raw.py      # Raw/Forensic-mode wrapper
+tests/fixtures/                      # One real (redacted) fixture per provider
+tests/run_tests.py                   # Regression + acceptance tests (stdlib unittest)
 samples/                             # Synthetic input + example output
+docs/                                # v5.0 spec + coverage/fidelity audit
+MAINTAINING.md                       # How the shape tables work and how to extend them
 ```
 
-The wrappers load the fixed `v4.0` core with `importlib.util` so they can never accidentally bind to an older `_session_extractor_core.py` in the same folder.
+The wrappers load the core with `importlib.util` from their own folder, so they can
+never accidentally bind to a different `_session_extractor_core*.py` sitting nearby.
+The current line is a duplicate-and-fix of v4.0, the same way v4.0 was of v3.x; the
+regression test asserts CHAT output stays byte-identical to the frozen v4.0 output
+in `tests/expected/chat/`.
 
 ## Supported export formats
 
-- **OpenAI / ChatGPT JSONL** — `{"type":"message","message":{...}}`
+Provider knowledge is table-driven (`WRAPPER_KEYS`/`CONTAINER_KEYS`/`ROLE_KEYS` in
+`_session_extractor_core.py`), not per-provider code — see
+[MAINTAINING.md](MAINTAINING.md) for how the tables work and how to extend them.
+Verified against real (redacted) fixtures in `tests/fixtures/`:
+
+- **OpenAI / ChatGPT** — both the simple `{"type":"message","message":{...}}` shape and the official `mapping`-based export
+- **Anthropic / Claude, Claude Desktop**
 - **Gemini CLI JSON** — `{"messages":[...]}` with `type`, `content`, `thoughts`, `toolCalls`
 - **Codex rollout** — `{"type":"response_item","payload":{...}}`
+- **Devin CLI** (`message_nodes[].chat_message`) and **Devin Desktop** (ACP `messages[].payload`)
+- **Cursor** — `bubbles[]`, including tool calls stored in `toolFormerData`
 - **Generic JSON/JSONL** — any `role`/`content`/`text` shape, including Windsurf-legacy flattened records
-- **Windsurf-legacy** — detected and handled in v4.0 (memory-injection blocks are stripped in Chat mode; preserved in Tools/Raw as designed)
+- **Windsurf-legacy** — memory-injection blocks are stripped in Chat mode; preserved in Tools/Raw as designed
+
+**Not supported: Antigravity's current export format.** Its real conversation data is
+Protocol Buffers inside a SQLite `.db`, not JSON — out of reach for a stdlib-only
+JSON reader. See [MAINTAINING.md](MAINTAINING.md#antigravity--a-documented-limitation-not-a-missing-table-row)
+for the investigation. Run `--diagnose` on it and the tool will tell you honestly,
+rather than silently mis-converting.
 
 ## Notable design details
 
@@ -116,15 +203,18 @@ The [`samples/`](samples) folder contains small, fully synthetic conversations i
 | `sample_gemini.json` | Gemini CLI JSON | [`output/[Chat] sample_gemini.md`](samples/output/[Chat]%20sample_gemini.md) |
 | `sample_generic.jsonl` | Generic role/text JSONL | [`output/[Chat] sample_generic.md`](samples/output/[Chat]%20sample_generic.md) |
 
-## Sponsor
+[`tests/fixtures/`](tests/fixtures) additionally holds one real (redacted) fixture
+per newly-supported provider — ChatGPT's official export, Claude Desktop, Devin CLI,
+Devin Desktop, and Cursor — exercised by `tests/run_tests.py`.
 
-If this tool saves you time, consider sponsoring its development:
+## Related
 
-<a href="https://github.com/sponsors/martenzi"><img src="https://img.shields.io/badge/Sponsor-%E2%9D%A4-ff69b4" alt="Sponsor this project"></a>
+[ChatVault](https://github.com/martenzi/ChatVault) — the larger project this grew out of: full ingestion into SQLite with dedup, tagging and semantic search.
 
 ## Changelog
 
-See [CHANGELOG.md](CHANGELOG.md) for version history and the v4.0 Windsurf-legacy fixes.
+See [CHANGELOG.md](CHANGELOG.md) for version history, including v5.0's shape-driven
+tables, the RAW-mode tool-call fix, and the coverage self-report.
 
 ## License
 
